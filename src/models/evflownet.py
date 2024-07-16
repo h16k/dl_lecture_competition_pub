@@ -29,7 +29,7 @@ class EVFlowNet(nn.Module):
         self.decoder4 = upsample_conv2d_and_predict_flow(in_channels=2*_BASE_CHANNELS+2,
                         out_channels=int(_BASE_CHANNELS/2), do_batch_norm=not self._args.no_batch_norm)
 
-    def forward(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+    def forward(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
         # encoder
         skip_connections = {}
         inputs = self.encoder1(inputs)
@@ -62,35 +62,4 @@ class EVFlowNet(nn.Module):
         inputs, flow = self.decoder4(inputs)
         flow_dict['flow3'] = flow.clone()
 
-        return flow
-        
-
-# if __name__ == "__main__":
-#     from config import configs
-#     import time
-#     from data_loader import EventData
-#     '''
-#     args = configs()
-#     model = EVFlowNet(args).cuda()
-#     input_ = torch.rand(8,4,256,256).cuda()
-#     a = time.time()
-#     output = model(input_)
-#     b = time.time()
-#     print(b-a)
-#     print(output['flow0'].shape, output['flow1'].shape, output['flow2'].shape, output['flow3'].shape)
-#     #print(model.state_dict().keys())
-#     #print(model)
-#     '''
-#     import numpy as np
-#     args = configs()
-#     model = EVFlowNet(args).cuda()
-#     EventDataset = EventData(args.data_path, 'train')
-#     EventDataLoader = torch.utils.data.DataLoader(dataset=EventDataset, batch_size=args.batch_size, shuffle=True)
-#     #model = nn.DataParallel(model)
-#     #model.load_state_dict(torch.load(args.load_path+'/model18'))
-#     for input_, _, _, _ in EventDataLoader:
-#         input_ = input_.cuda()
-#         a = time.time()
-#         (model(input_))
-#         b = time.time()
-#         print(b-a)
+        return flow_dict

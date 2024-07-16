@@ -44,6 +44,25 @@ def save_optical_flow_to_npy(flow: torch.Tensor, file_name: str):
     '''
     np.save(f"{file_name}.npy", flow.cpu().numpy())
 
+def compute_multiscale_epe_loss(pred_flows: Dict[str, torch.Tensor], gt_flow: torch.Tensor):
+    total_loss = 0
+    # loss_weights = [0.32, 0.04, 0.02, 0.01]  # 各スケールの重み
+    loss_weights = [0.64, 0.04, 0.02, 0.01]  # 各スケールの重み
+    # loss_weights = [0.64, 0.06, 0.02, 0.01]  # 各スケールの重み
+    # loss_weights = [0.64, 0.03, 0.02, 0.01]  # 各スケールの重み
+
+    for i, (flow_key, weight) in enumerate(zip(["flow3", "flow2", "flow1", "flow0"], loss_weights)):
+        pred_flow = pred_flows[flow_key]
+        if i > 0:
+            gt_flow_scaled = torch.nn.functional.interpolate(gt_flow, size=pred_flow.shape[2:], mode='bilinear', align_corners=False)
+        else:
+            gt_flow_scaled = gt_flow
+
+        epe = torch.mean(torch.mean(torch.norm(pred_flow - gt_flow_scaled, p=2, dim=1), dim=(1, 2)), dim=0)
+        total_loss += weight * epe
+
+    return total_loss
+
 @hydra.main(version_base=None, config_path="configs", config_name="base")
 def main(args: DictConfig):
     set_seed(args.seed)
@@ -70,7 +89,7 @@ def main(args: DictConfig):
             ├─zurich_city_11_b
             └─zurich_city_11_c
         '''
-    
+
     # ------------------
     #    Dataloader
     # ------------------
@@ -101,7 +120,7 @@ def main(args: DictConfig):
         Key: event_volume, Type: torch.Tensor, Shape: torch.Size([Batch, 4, 480, 640]) => イベントデータのバッチ
         Key: flow_gt, Type: torch.Tensor, Shape: torch.Size([Batch, 2, 480, 640]) => オプティカルフローデータのバッチ
         Key: flow_gt_valid_mask, Type: torch.Tensor, Shape: torch.Size([Batch, 1, 480, 640]) => オプティカルフローデータのvalid. ベースラインでは使わない
-    
+
     test data:
         Type of batch: Dict
         Key: seq_name, Type: list
@@ -127,8 +146,8 @@ def main(args: DictConfig):
             batch: Dict[str, Any]
             event_image = batch["event_volume"].to(device) # [B, 4, 480, 640]
             ground_truth_flow = batch["flow_gt"].to(device) # [B, 2, 480, 640]
-            flow = model(event_image) # [B, 2, 480, 640]
-            loss: torch.Tensor = compute_epe_error(flow, ground_truth_flow)
+            flow_dict = model(event_image) # [B, 2, 480, 640]
+            loss: torch.Tensor = compute_multiscale_epe_loss(flow_dict, ground_truth_flow)
             print(f"batch {i} loss: {loss.item()}")
             optimizer.zero_grad()
             loss.backward()
@@ -137,14 +156,22 @@ def main(args: DictConfig):
             total_loss += loss.item()
         print(f'Epoch {epoch+1}, Loss: {total_loss / len(train_data)}')
 
-    # Create the directory if it doesn't exist
-    if not os.path.exists('checkpoints'):
-        os.makedirs('checkpoints')
-    
-    current_time = time.strftime("%Y%m%d%H%M%S")
-    model_path = f"checkpoints/model_{current_time}.pth"
-    torch.save(model.state_dict(), model_path)
-    print(f"Model saved to {model_path}")
+        # 各エポック終了時にモデルを上書き保存
+        if not os.path.exists('checkpoints'):
+            os.makedirs('checkpoints')
+
+        model_path = f"checkpoints/model_latest.pth"
+        torch.save(model.state_dict(), model_path)
+        print(f"Model saved to {model_path} at epoch {epoch+1}")
+
+    # # Create the directory if it doesn't exist
+    # if not os.path.exists('checkpoints'):
+    #     os.makedirs('checkpoints')
+
+    # current_time = time.strftime("%Y%m%d%H%M%S")
+    # model_path = f"checkpoints/model_{current_time}.pth"
+    # torch.save(model.state_dict(), model_path)
+    # print(f"Model saved to {model_path}")
 
     # ------------------
     #   Start predicting
@@ -157,7 +184,7 @@ def main(args: DictConfig):
         for batch in tqdm(test_data):
             batch: Dict[str, Any]
             event_image = batch["event_volume"].to(device)
-            batch_flow = model(event_image) # [1, 2, 480, 640]
+            batch_flow = model(event_image)["flow3"] # [1, 2, 480, 640]
             flow = torch.cat((flow, batch_flow), dim=0)  # [N, 2, 480, 640]
         print("test done")
     # ------------------
